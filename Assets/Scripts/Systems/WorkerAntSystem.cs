@@ -13,6 +13,7 @@ namespace AntWar.Systems
     {
         private EntityQuery _foodQuery;
         private EntityQuery _nestQuery;
+        private EntityQuery _workerQuery;
 
         public void OnCreate(ref SystemState state)
         {
@@ -29,6 +30,12 @@ namespace AntWar.Systems
                 ComponentType.ReadOnly<PositionComponent>(),
                 ComponentType.ReadOnly<TeamComponent>(),
                 ComponentType.ReadOnly<NestTag>());
+
+            _workerQuery = state.GetEntityQuery(
+                ComponentType.ReadOnly<PositionComponent>(),
+                ComponentType.ReadOnly<TeamComponent>(),
+                ComponentType.ReadOnly<AntStateComponent>(),
+                ComponentType.ReadOnly<WorkerAntTag>());
         }
 
         public void OnUpdate(ref SystemState state)
@@ -41,22 +48,33 @@ namespace AntWar.Systems
             var nestPositions = _nestQuery.ToComponentDataArray<PositionComponent>(Allocator.Temp);
             var nestTeams = _nestQuery.ToComponentDataArray<TeamComponent>(Allocator.Temp);
 
+            var workerPositions = _workerQuery.ToComponentDataArray<PositionComponent>(Allocator.Temp);
+            var workerTeams = _workerQuery.ToComponentDataArray<TeamComponent>(Allocator.Temp);
+            var workerStates = _workerQuery.ToComponentDataArray<AntStateComponent>(Allocator.Temp);
+
             float deltaTime = SystemAPI.Time.DeltaTime;
             var ecb = new EntityCommandBuffer(Allocator.TempJob);
 
-            foreach (var (position, velocity, antState, carry, team, strategy, workerEntity) in
+            foreach (var (position, velocity, antState, carry, team, strategy, avoidance, workerEntity) in
                      SystemAPI.Query<
                          RefRW<PositionComponent>,
                          RefRW<VelocityComponent>,
                          RefRW<AntStateComponent>,
                          RefRW<CarryComponent>,
                          RefRO<TeamComponent>,
-                         RefRO<StrategyComponent>>()
+                         RefRO<StrategyComponent>,
+                         RefRW<AvoidanceComponent>>()
                      .WithAll<WorkerAntTag>().WithEntityAccess())
             {
                 float2 pos = position.ValueRW.Value;
                 TeamType myTeam = team.ValueRO.Team;
                 AntState currentState = antState.ValueRW.CurrentState;
+
+                if (avoidance.ValueRO.DetourCooldown > 0f)
+                {
+                    velocity.ValueRW.Value = avoidance.ValueRO.DetourDirection;
+                    continue;
+                }
 
                 float2 nestPos = float2.zero;
                 Entity nestEntity = Entity.Null;
@@ -73,14 +91,14 @@ namespace AntWar.Systems
                 switch (currentState)
                 {
                     case AntState.Idle:
-                        FindNearestFood(pos, foodEntities, foodPositions, foodComponents,
-                            ref antState, strategy.ValueRO);
+                        FindNearestFood(pos, myTeam, foodEntities, foodPositions, foodComponents,
+                            ref antState, strategy.ValueRO, ref avoidance, workerPositions, workerTeams, workerStates);
                         break;
 
                     case AntState.SeekingFood:
                         HandleSeekingFood(pos, ref antState, ref carry, ref velocity,
                             foodEntities, foodPositions, foodComponents, deltaTime,
-                            ref state, ecb, myTeam);
+                            ref state, ecb, myTeam, ref avoidance);
                         break;
 
                     case AntState.ReturningFood:
@@ -99,17 +117,28 @@ namespace AntWar.Systems
             nestEntities.Dispose();
             nestPositions.Dispose();
             nestTeams.Dispose();
+            workerPositions.Dispose();
+            workerTeams.Dispose();
+            workerStates.Dispose();
         }
 
         private void FindNearestFood(float2 currentPos,
+            TeamType myTeam,
             NativeArray<Entity> foodEntities,
             NativeArray<PositionComponent> foodPositions,
             NativeArray<FoodComponent> foodComponents,
             ref RefRW<AntStateComponent> antState,
-            StrategyComponent strategy)
+            StrategyComponent strategy,
+            ref RefRW<AvoidanceComponent> avoidance,
+            NativeArray<PositionComponent> workerPositions,
+            NativeArray<TeamComponent> workerTeams,
+            NativeArray<AntStateComponent> workerStates)
         {
-            int nearestIndex = -1;
-            float nearestDistSq = float.MaxValue;
+            if (foodEntities.Length == 0)
+                return;
+
+            int bestIndex = -1;
+            float bestScore = float.MaxValue;
 
             for (int i = 0; i < foodComponents.Length; i++)
             {
@@ -117,28 +146,57 @@ namespace AntWar.Systems
                     continue;
 
                 float distSq = math.distancesq(currentPos, foodPositions[i].Value);
+                float dist = math.sqrt(distSq);
+
+                float congestion = 0f;
+                float congestionRadius = GameConfig.CongestionCheckRadius;
+                for (int j = 0; j < workerPositions.Length; j++)
+                {
+                    if (workerTeams[j].Team != myTeam)
+                        continue;
+
+                    float distToFood = math.distance(workerPositions[j].Value, foodPositions[i].Value);
+                    if (distToFood < congestionRadius)
+                    {
+                        AntState otherState = workerStates[j].CurrentState;
+                        if (otherState == AntState.SeekingFood || otherState == AntState.Idle)
+                        {
+                            congestion += 1f - distToFood / congestionRadius;
+                        }
+                    }
+                }
+
+                float score = dist + congestion * GameConfig.CongestionPenaltyWeight;
 
                 if (strategy.Strategy == StrategyType.GatherArea)
                 {
                     float distToTarget = math.distance(foodPositions[i].Value, strategy.StrategyTarget);
                     if (distToTarget > strategy.StrategyRadius)
                     {
-                        distSq *= 3f;
+                        score += dist * 2f;
                     }
                 }
 
-                if (distSq < nearestDistSq)
+                if (score < bestScore)
                 {
-                    nearestDistSq = distSq;
-                    nearestIndex = i;
+                    bestScore = score;
+                    bestIndex = i;
                 }
             }
 
-            if (nearestIndex >= 0)
+            if (bestIndex >= 0)
             {
+                float2 foodPos = foodPositions[bestIndex].Value;
+                uint seed = (uint)(currentPos.x * 1000f + currentPos.y * 7919f + bestIndex * 31f + avoidance.ValueRO.RandomSeed);
+                Random rng = Random.CreateFromIndex(seed);
+                float2 scatterOffset = new float2(
+                    rng.NextFloat(-GameConfig.TargetScatterRadius, GameConfig.TargetScatterRadius),
+                    rng.NextFloat(-GameConfig.TargetScatterRadius, GameConfig.TargetScatterRadius));
+                float2 scatteredTarget = foodPos + scatterOffset;
+
                 antState.ValueRW.CurrentState = AntState.SeekingFood;
-                antState.ValueRW.TargetEntity = foodEntities[nearestIndex];
-                antState.ValueRW.TargetPosition = foodPositions[nearestIndex].Value;
+                antState.ValueRW.TargetEntity = foodEntities[bestIndex];
+                antState.ValueRW.TargetPosition = scatteredTarget;
                 antState.ValueRW.HasTarget = true;
             }
         }
@@ -153,9 +211,10 @@ namespace AntWar.Systems
             float deltaTime,
             ref SystemState state,
             EntityCommandBuffer ecb,
-            TeamType team)
+            TeamType team,
+            ref RefRW<AvoidanceComponent> avoidance)
         {
-            if (!antState.ValueRO.HasTarget)
+            if (!antState.ValueRO.HasTarget || antState.ValueRO.TargetEntity == Entity.Null)
             {
                 antState.ValueRW.CurrentState = AntState.Idle;
                 velocity.ValueRW.Value = float2.zero;
@@ -164,54 +223,59 @@ namespace AntWar.Systems
 
             Entity target = antState.ValueRO.TargetEntity;
             float2 targetPos = antState.ValueRO.TargetPosition;
-            float distToTarget = math.distance(pos, targetPos);
 
-            if (distToTarget <= GameConfig.FoodGatherRange)
+            int foodIndex = -1;
+            for (int i = 0; i < foodEntities.Length; i++)
+            {
+                if (foodEntities[i] == target)
+                {
+                    foodIndex = i;
+                    break;
+                }
+            }
+
+            if (foodIndex < 0 || foodComponents[foodIndex].Amount <= 0f)
+            {
+                antState.ValueRW.CurrentState = AntState.Idle;
+                antState.ValueRW.HasTarget = false;
+                antState.ValueRW.TargetEntity = Entity.Null;
+                velocity.ValueRW.Value = float2.zero;
+                return;
+            }
+
+            float2 actualFoodPos = foodPositions[foodIndex].Value;
+            float distToActualFood = math.distance(pos, actualFoodPos);
+
+            if (distToActualFood <= GameConfig.FoodGatherRange)
             {
                 float gatherAmount = GameConfig.FoodGatherRate * deltaTime;
+                float actualGather = math.min(gatherAmount, foodComponents[foodIndex].Amount);
+                actualGather = math.min(actualGather, carry.ValueRO.MaxCarryCapacity - carry.ValueRO.CarriedFood);
 
-                int foodIndex = -1;
-                for (int i = 0; i < foodEntities.Length; i++)
+                if (actualGather > 0f)
                 {
-                    if (foodEntities[i] == target)
-                    {
-                        foodIndex = i;
-                        break;
-                    }
+                    carry.ValueRW.CarriedFood += actualGather;
+                    carry.ValueRW.IsCarrying = carry.ValueRO.CarriedFood > 0f;
+
+                    RefRW<FoodComponent> foodComp = SystemAPI.GetComponentRW<FoodComponent>(target);
+                    foodComp.ValueRW.Amount -= actualGather;
                 }
 
-                if (foodIndex >= 0 && foodComponents[foodIndex].Amount > 0f)
+                bool capacityFull = carry.ValueRO.CarriedFood >= carry.ValueRO.MaxCarryCapacity;
+                bool foodDepleted = foodComponents[foodIndex].Amount <= actualGather + 0.01f;
+
+                if (capacityFull || foodDepleted)
                 {
-                    float actualGather = math.min(gatherAmount, foodComponents[foodIndex].Amount);
-                    actualGather = math.min(actualGather, carry.ValueRO.MaxCarryCapacity - carry.ValueRO.CarriedFood);
-
-                    if (actualGather > 0f)
+                    if (carry.ValueRO.CarriedFood > 0f)
                     {
-                        carry.ValueRW.CarriedFood += actualGather;
-                        carry.ValueRW.IsCarrying = carry.ValueRO.CarriedFood > 0f;
-
-                        RefRW<FoodComponent> foodComp = SystemAPI.GetComponentRW<FoodComponent>(target);
-                        foodComp.ValueRW.Amount -= actualGather;
+                        BattleLogger.LogFoodGathered(
+                            team == TeamType.Red ? "红方" : "蓝方",
+                            carry.ValueRO.CarriedFood);
                     }
 
-                    if (carry.ValueRO.CarriedFood >= carry.ValueRO.MaxCarryCapacity ||
-                        foodComponents[foodIndex].Amount <= actualGather)
-                    {
-                        if (carry.ValueRO.CarriedFood > 0f)
-                        {
-                            BattleLogger.LogFoodGathered(
-                                team == TeamType.Red ? "红方" : "蓝方",
-                                carry.ValueRO.CarriedFood);
-                        }
-
-                        antState.ValueRW.CurrentState = AntState.ReturningFood;
-                        antState.ValueRW.HasTarget = false;
-                        antState.ValueRW.TargetEntity = Entity.Null;
-                    }
-                }
-                else
-                {
-                    antState.ValueRW.CurrentState = AntState.Idle;
+                    antState.ValueRW.CurrentState = carry.ValueRO.CarriedFood > 0f
+                        ? AntState.ReturningFood
+                        : AntState.Idle;
                     antState.ValueRW.HasTarget = false;
                     antState.ValueRW.TargetEntity = Entity.Null;
                 }
@@ -220,7 +284,7 @@ namespace AntWar.Systems
             }
             else
             {
-                float2 dir = math.normalize(targetPos - pos);
+                float2 dir = math.normalize(actualFoodPos - pos);
                 velocity.ValueRW.Value = dir;
             }
         }

@@ -5,6 +5,7 @@ using Unity.Mathematics;
 namespace AntWar.Systems
 {
     [UpdateInGroup(typeof(SimulationSystemGroup))]
+    [UpdateAfter(typeof(AntAvoidanceSystem))]
     [UpdateBefore(typeof(WorkerAntSystem))]
     [UpdateBefore(typeof(SoldierAntSystem))]
     public partial struct MovementSystem : ISystem
@@ -18,12 +19,14 @@ namespace AntWar.Systems
         public void OnUpdate(ref SystemState state)
         {
             float deltaTime = SystemAPI.Time.DeltaTime;
+            float halfMapW = GameConfig.MapWidth / 2f;
+            float halfMapH = GameConfig.MapHeight / 2f;
 
             foreach (var (position, velocity) in
-                     SystemAPI.Query<RefRW<PositionComponent>, RefRO<VelocityComponent>>())
+                     SystemAPI.Query<RefRW<PositionComponent>, RefRW<VelocityComponent>>())
             {
                 float2 pos = position.ValueRW.Value;
-                float2 vel = velocity.ValueRO.Value;
+                float2 vel = velocity.ValueRW.Value;
                 float speed = velocity.ValueRO.Speed;
 
                 if (math.lengthsq(vel) > 0.0001f)
@@ -32,8 +35,34 @@ namespace AntWar.Systems
                     pos += normalized * speed * deltaTime;
                 }
 
-                pos.x = math.clamp(pos.x, -GameConfig.MapWidth / 2f, GameConfig.MapWidth / 2f);
-                pos.y = math.clamp(pos.y, -GameConfig.MapHeight / 2f, GameConfig.MapHeight / 2f);
+                bool hitBoundary = false;
+
+                if (pos.x < -halfMapW)
+                {
+                    pos.x = -halfMapW + 0.1f;
+                    hitBoundary = true;
+                }
+                else if (pos.x > halfMapW)
+                {
+                    pos.x = halfMapW - 0.1f;
+                    hitBoundary = true;
+                }
+
+                if (pos.y < -halfMapH)
+                {
+                    pos.y = -halfMapH + 0.1f;
+                    hitBoundary = true;
+                }
+                else if (pos.y > halfMapH)
+                {
+                    pos.y = halfMapH - 0.1f;
+                    hitBoundary = true;
+                }
+
+                if (hitBoundary)
+                {
+                    velocity.ValueRW.Value = float2.zero;
+                }
 
                 position.ValueRW.Value = pos;
             }

@@ -41,5 +41,21 @@ namespace AntWar.Utils
 
         public const float SoldierDetectionRange = 15f;
         public const float WorkerDetectionRange = 10f;
+
+        public const float SeparationRadius = 3f;
+        public const float SeparationForce = 2f;
+
+        public const float BoundaryAvoidanceMargin = 15f;
+        public const float BoundaryAvoidanceForce = 3f;
+
+        public const float StagnationThreshold = 0.5f;
+        public const float StagnationTimeLimit = 1.5f;
+
+        public const float DetourDuration = 2f;
+
+        public const float CongestionCheckRadius = 8f;
+        public const float CongestionPenaltyWeight = 5f;
+
+        public const float TargetScatterRadius = 2f;
     }
 }

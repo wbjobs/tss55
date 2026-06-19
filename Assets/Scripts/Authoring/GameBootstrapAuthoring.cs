@@ -103,6 +103,16 @@ namespace AntWar.Authoring
                 StrategyRadius = 0f,
                 Priority = 0f
             });
+            entityManager.AddComponentData(antEntity, new AvoidanceComponent
+            {
+                PreviousPosition = spawnPos,
+                StagnationTimer = 0f,
+                AvoidanceOffset = float2.zero,
+                StuckCount = 0,
+                DetourCooldown = 0f,
+                DetourDirection = float2.zero,
+                RandomSeed = random.NextFloat(0f, 10000f)
+            });
 
             if (antType == AntType.Worker)
             {

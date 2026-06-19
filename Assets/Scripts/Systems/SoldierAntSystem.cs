@@ -36,7 +36,7 @@ namespace AntWar.Systems
             float deltaTime = SystemAPI.Time.DeltaTime;
             var ecb = new EntityCommandBuffer(Allocator.TempJob);
 
-            foreach (var (position, velocity, antState, combat, team, health, antType, strategy, soldierEntity) in
+            foreach (var (position, velocity, antState, combat, team, health, antType, strategy, avoidance, soldierEntity) in
                      SystemAPI.Query<
                          RefRW<PositionComponent>,
                          RefRW<VelocityComponent>,
@@ -45,20 +45,26 @@ namespace AntWar.Systems
                          RefRO<TeamComponent>,
                          RefRO<HealthComponent>,
                          RefRO<AntTypeComponent>,
-                         RefRO<StrategyComponent>>()
+                         RefRO<StrategyComponent>,
+                         RefRW<AvoidanceComponent>>()
                      .WithAll<SoldierAntTag>().WithEntityAccess())
             {
-
                 float2 pos = position.ValueRW.Value;
                 TeamType myTeam = team.ValueRO.Team;
                 AntState currentState = antState.ValueRW.CurrentState;
+
+                if (avoidance.ValueRO.DetourCooldown > 0f)
+                {
+                    velocity.ValueRW.Value = avoidance.ValueRO.DetourDirection;
+                    continue;
+                }
 
                 switch (currentState)
                 {
                     case AntState.Idle:
                     case AntState.Defending:
                         FindNearestEnemy(pos, myTeam, enemyEntities, enemyPositions, enemyTeams, enemyHealths,
-                            ref antState, combat.ValueRO.AttackRange, strategy.ValueRO);
+                            ref antState, combat.ValueRO.AttackRange, strategy.ValueRO, ref avoidance);
                         break;
 
                     case AntState.Attacking:
@@ -87,7 +93,8 @@ namespace AntWar.Systems
             NativeArray<HealthComponent> enemyHealths,
             ref RefRW<AntStateComponent> antState,
             float attackRange,
-            StrategyComponent strategy)
+            StrategyComponent strategy,
+            ref RefRW<AvoidanceComponent> avoidance)
         {
             int nearestIndex = -1;
             float nearestDistSq = float.MaxValue;
@@ -137,17 +144,28 @@ namespace AntWar.Systems
                 if (strategy.Strategy == StrategyType.Defend)
                 {
                     antState.ValueRW.CurrentState = AntState.Defending;
-                    float2 wanderDir = math.normalize(new float2(
-                        UnityEngine.Random.Range(-1f, 1f),
-                        UnityEngine.Random.Range(-1f, 1f)));
-                    antState.ValueRW.TargetPosition = currentPos + wanderDir * 5f;
+
+                    uint seed = (uint)(currentPos.x * 1000f + currentPos.y * 7919f +
+                                       avoidance.ValueRO.RandomSeed +
+                                       (uint)SystemAPI.Time.ElapsedTime * 7u);
+                    Random rng = Random.CreateFromIndex(seed);
+                    float angle = rng.NextFloat(0f, 2f * math.PI);
+                    float2 wanderDir = new float2(math.cos(angle), math.sin(angle));
+
+                    float2 nestPos = strategy.Strategy == StrategyType.Defend
+                        ? strategy.StrategyTarget
+                        : currentPos;
+                    float2 wanderTarget = nestPos + wanderDir * rng.NextFloat(3f, 8f);
+
+                    antState.ValueRW.TargetPosition = wanderTarget;
+                    antState.ValueRW.HasTarget = true;
                 }
                 else
                 {
                     antState.ValueRW.CurrentState = AntState.Idle;
+                    antState.ValueRW.HasTarget = false;
+                    antState.ValueRW.TargetEntity = Entity.Null;
                 }
-                antState.ValueRW.HasTarget = false;
-                antState.ValueRW.TargetEntity = Entity.Null;
             }
         }
 

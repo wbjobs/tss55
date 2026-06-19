@@ -98,6 +98,16 @@ namespace AntWar.Systems
                 StrategyRadius = 0f,
                 Priority = 0f
             });
+            ecb.AddComponent(antEntity, new AvoidanceComponent
+            {
+                PreviousPosition = spawnPos,
+                StagnationTimer = 0f,
+                AvoidanceOffset = float2.zero,
+                StuckCount = 0,
+                DetourCooldown = 0f,
+                DetourDirection = float2.zero,
+                RandomSeed = random.NextFloat(0f, 10000f)
+            });
 
             if (antType == AntType.Worker)
             {

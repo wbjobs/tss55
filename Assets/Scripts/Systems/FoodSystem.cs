@@ -4,12 +4,11 @@ using Unity.Entities;
 namespace AntWar.Systems
 {
     [UpdateInGroup(typeof(SimulationSystemGroup))]
-    [UpdateAfter(typeof(WorkerAntSystem))]
+    [UpdateAfter(typeof(CarrionSystem))]
     public partial struct FoodSystem : ISystem
     {
         public void OnCreate(ref SystemState state)
         {
-            state.RequireForUpdate<FoodTag>();
         }
 
         public void OnUpdate(ref SystemState state)
@@ -18,7 +17,9 @@ namespace AntWar.Systems
 
             foreach (var (food, entity) in
                      SystemAPI.Query<RefRO<FoodComponent>>()
-                     .WithAll<FoodTag>().WithEntityAccess())
+                     .WithAll<FoodTag>()
+                     .WithNone<FruitTreeTag, CarrionTag>()
+                     .WithEntityAccess())
             {
                 if (food.ValueRO.Amount <= 0f)
                 {

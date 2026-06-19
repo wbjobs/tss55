@@ -29,10 +29,6 @@ namespace AntWar.Utils
         public const float FoodPerWorkerSpawn = 20f;
         public const float FoodPerSoldierSpawn = 50f;
 
-        public const int FoodPointCount = 12;
-        public const float MinFoodAmount = 30f;
-        public const float MaxFoodAmount = 100f;
-
         public const float NestRadius = 8f;
         public const float NestPositionOffset = 70f;
 
@@ -57,5 +53,19 @@ namespace AntWar.Utils
         public const float CongestionPenaltyWeight = 5f;
 
         public const float TargetScatterRadius = 2f;
+
+        public const int FruitTreeCount = 10;
+        public const float MinFruitTreeYield = 40f;
+        public const float MaxFruitTreeYield = 120f;
+        public const float FruitTreeRegrowInterval = 20f;
+        public const float FruitTreeMinDistanceFromNest = 20f;
+        public const float FruitTreeRadius = 2.5f;
+        public const float FruitTreeRandomSpawnInterval = 60f;
+        public const int MaxFruitTrees = 15;
+
+        public const float CarrionPerWorker = 15f;
+        public const float CarrionPerSoldier = 35f;
+        public const float CarrionDecayTime = 45f;
+        public const float CarrionRadius = 1.2f;
     }
 }

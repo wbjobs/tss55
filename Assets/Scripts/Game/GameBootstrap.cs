@@ -16,7 +16,6 @@ namespace AntWar.Game
 
         public int InitialWorkersPerTeam = 15;
         public int InitialSoldiersPerTeam = 5;
-        public int FoodPointCount = 12;
 
         private void Awake()
         {
@@ -42,7 +41,7 @@ namespace AntWar.Game
 
             SpawnNests();
             SpawnInitialAnts();
-            SpawnFoodPoints();
+            SpawnFruitTrees();
         }
 
         private void SpawnNests()
@@ -184,41 +183,69 @@ namespace AntWar.Game
             }
         }
 
-        private void SpawnFoodPoints()
+        private void SpawnFruitTrees()
         {
             Random random = Random.CreateFromIndex(42);
+            int spawned = 0;
+            int maxAttempts = GameConfig.FruitTreeCount * 5;
+            int attempts = 0;
 
-            for (int i = 0; i < FoodPointCount; i++)
+            while (spawned < GameConfig.FruitTreeCount && attempts < maxAttempts)
             {
+                attempts++;
                 float x = random.NextFloat(-GameConfig.MapWidth / 2f + 10f, GameConfig.MapWidth / 2f - 10f);
                 float y = random.NextFloat(-GameConfig.MapHeight / 2f + 10f, GameConfig.MapHeight / 2f - 10f);
                 float2 pos = new float2(x, y);
 
-                if (math.distance(pos, GameConfig.RedNestPosition) < 20f ||
-                    math.distance(pos, GameConfig.BlueNestPosition) < 20f)
-                {
-                    i--;
+                if (math.distance(pos, GameConfig.RedNestPosition) < GameConfig.FruitTreeMinDistanceFromNest ||
+                    math.distance(pos, GameConfig.BlueNestPosition) < GameConfig.FruitTreeMinDistanceFromNest)
                     continue;
-                }
 
-                float amount = random.NextFloat(GameConfig.MinFoodAmount, GameConfig.MaxFoodAmount);
-                CreateFoodPoint(pos, amount);
+                var treeQuery = _entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<FruitTreeTag>(),
+                    ComponentType.ReadOnly<PositionComponent>());
+                using var treePositions = treeQuery.ToComponentDataArray<PositionComponent>(Unity.Collections.Allocator.Temp);
+                bool tooClose = false;
+                for (int t = 0; t < treePositions.Length; t++)
+                {
+                    if (math.distance(pos, treePositions[t].Value) < 15f)
+                    {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                if (tooClose)
+                    continue;
+
+                float yield = random.NextFloat(GameConfig.MinFruitTreeYield, GameConfig.MaxFruitTreeYield);
+                CreateFruitTree(pos, yield);
+                spawned++;
             }
 
-            BattleLogger.Log($"🍞 地图上生成了 {FoodPointCount} 个食物点");
+            BattleLogger.Log($"� 地图上生成了 {spawned} 棵果树");
         }
 
-        private void CreateFoodPoint(float2 position, float amount)
+        private void CreateFruitTree(float2 position, float yield)
         {
-            Entity foodEntity = _entityManager.CreateEntity();
+            Entity treeEntity = _entityManager.CreateEntity();
 
-            _entityManager.AddComponentData(foodEntity, new PositionComponent { Value = position });
-            _entityManager.AddComponentData(foodEntity, new FoodComponent
+            _entityManager.AddComponentData(treeEntity, new PositionComponent { Value = position });
+            _entityManager.AddComponentData(treeEntity, new FoodComponent
             {
-                Amount = amount,
-                MaxAmount = amount
+                Amount = yield,
+                MaxAmount = yield
             });
-            _entityManager.AddComponent<FoodTag>(foodEntity);
+            _entityManager.AddComponentData(treeEntity, new FruitTreeComponent
+            {
+                RegrowTimer = 0f,
+                RegrowInterval = GameConfig.FruitTreeRegrowInterval,
+                IsRegenerating = false,
+                MaxYield = yield
+            });
+            _entityManager.AddComponent<FoodTag>(treeEntity);
+            _entityManager.AddComponent<FruitTreeTag>(treeEntity);
+
+            BattleLogger.LogFruitTreeGrown(position, yield);
         }
 
         public void SetRedGatherStrategy(float2 target, float radius)

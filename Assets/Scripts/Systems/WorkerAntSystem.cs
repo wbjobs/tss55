@@ -14,6 +14,7 @@ namespace AntWar.Systems
         private EntityQuery _foodQuery;
         private EntityQuery _nestQuery;
         private EntityQuery _workerQuery;
+        private EntityQuery _treeQuery;
 
         public void OnCreate(ref SystemState state)
         {
@@ -36,6 +37,10 @@ namespace AntWar.Systems
                 ComponentType.ReadOnly<TeamComponent>(),
                 ComponentType.ReadOnly<AntStateComponent>(),
                 ComponentType.ReadOnly<WorkerAntTag>());
+
+            _treeQuery = state.GetEntityQuery(
+                ComponentType.ReadOnly<FruitTreeComponent>(),
+                ComponentType.ReadOnly<FruitTreeTag>());
         }
 
         public void OnUpdate(ref SystemState state)
@@ -51,6 +56,18 @@ namespace AntWar.Systems
             var workerPositions = _workerQuery.ToComponentDataArray<PositionComponent>(Allocator.Temp);
             var workerTeams = _workerQuery.ToComponentDataArray<TeamComponent>(Allocator.Temp);
             var workerStates = _workerQuery.ToComponentDataArray<AntStateComponent>(Allocator.Temp);
+
+            var treeEntities = _treeQuery.ToEntityArray(Allocator.Temp);
+            var treeComponents = _treeQuery.ToComponentDataArray<FruitTreeComponent>(Allocator.Temp);
+
+            var regeneratingTrees = new NativeHashSet<Entity>(treeEntities.Length, Allocator.Temp);
+            for (int t = 0; t < treeEntities.Length; t++)
+            {
+                if (treeComponents[t].IsRegenerating)
+                {
+                    regeneratingTrees.Add(treeEntities[t]);
+                }
+            }
 
             float deltaTime = SystemAPI.Time.DeltaTime;
             var ecb = new EntityCommandBuffer(Allocator.TempJob);
@@ -92,13 +109,15 @@ namespace AntWar.Systems
                 {
                     case AntState.Idle:
                         FindNearestFood(pos, myTeam, foodEntities, foodPositions, foodComponents,
-                            ref antState, strategy.ValueRO, ref avoidance, workerPositions, workerTeams, workerStates);
+                            ref antState, strategy.ValueRO, ref avoidance,
+                            workerPositions, workerTeams, workerStates,
+                            regeneratingTrees);
                         break;
 
                     case AntState.SeekingFood:
                         HandleSeekingFood(pos, ref antState, ref carry, ref velocity,
                             foodEntities, foodPositions, foodComponents, deltaTime,
-                            ref state, ecb, myTeam, ref avoidance);
+                            ref state, ecb, myTeam, ref avoidance, regeneratingTrees);
                         break;
 
                     case AntState.ReturningFood:
@@ -120,6 +139,9 @@ namespace AntWar.Systems
             workerPositions.Dispose();
             workerTeams.Dispose();
             workerStates.Dispose();
+            treeEntities.Dispose();
+            treeComponents.Dispose();
+            regeneratingTrees.Dispose();
         }
 
         private void FindNearestFood(float2 currentPos,
@@ -132,7 +154,8 @@ namespace AntWar.Systems
             ref RefRW<AvoidanceComponent> avoidance,
             NativeArray<PositionComponent> workerPositions,
             NativeArray<TeamComponent> workerTeams,
-            NativeArray<AntStateComponent> workerStates)
+            NativeArray<AntStateComponent> workerStates,
+            NativeHashSet<Entity> regeneratingTrees)
         {
             if (foodEntities.Length == 0)
                 return;
@@ -143,6 +166,9 @@ namespace AntWar.Systems
             for (int i = 0; i < foodComponents.Length; i++)
             {
                 if (foodComponents[i].Amount <= 0f)
+                    continue;
+
+                if (regeneratingTrees.Contains(foodEntities[i]))
                     continue;
 
                 float distSq = math.distancesq(currentPos, foodPositions[i].Value);
@@ -212,7 +238,8 @@ namespace AntWar.Systems
             ref SystemState state,
             EntityCommandBuffer ecb,
             TeamType team,
-            ref RefRW<AvoidanceComponent> avoidance)
+            ref RefRW<AvoidanceComponent> avoidance,
+            NativeHashSet<Entity> regeneratingTrees)
         {
             if (!antState.ValueRO.HasTarget || antState.ValueRO.TargetEntity == Entity.Null)
             {
@@ -222,6 +249,16 @@ namespace AntWar.Systems
             }
 
             Entity target = antState.ValueRO.TargetEntity;
+
+            if (regeneratingTrees.Contains(target))
+            {
+                antState.ValueRW.CurrentState = AntState.Idle;
+                antState.ValueRW.HasTarget = false;
+                antState.ValueRW.TargetEntity = Entity.Null;
+                velocity.ValueRW.Value = float2.zero;
+                return;
+            }
+
             float2 targetPos = antState.ValueRO.TargetPosition;
 
             int foodIndex = -1;

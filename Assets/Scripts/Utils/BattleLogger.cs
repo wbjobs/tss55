@@ -66,6 +66,30 @@ namespace AntWar.Utils
             Log(message);
         }
 
+        public static void LogFruitTreeGrown(float2 position, float yieldAmount)
+        {
+            string message = $"🌳 果树: 新果树成熟，位置 ({position.x:F1}, {position.y:F1})，产量 {yieldAmount:F1}";
+            Log(message);
+        }
+
+        public static void LogFruitTreeRegrow(float2 position)
+        {
+            string message = $"🌱 果树: 果树重新结果，位置 ({position.x:F1}, {position.y:F1})";
+            Log(message);
+        }
+
+        public static void LogCarrionSpawned(float2 position, float amount, string source)
+        {
+            string message = $"🦴 腐肉: 在 ({position.x:F1}, {position.y:F1}) 生成 {amount:F1} 食物（来源：{source}）";
+            Log(message);
+        }
+
+        public static void LogCarrionDecayed(float2 position)
+        {
+            string message = $"💨 腐肉: 在 ({position.x:F1}, {position.y:F1}) 已腐烂消失";
+            Log(message);
+        }
+
         public static string[] GetAllLogs()
         {
             lock (_lock)

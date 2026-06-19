@@ -249,6 +249,32 @@ namespace AntWar.Systems
                             enemyTeam == TeamType.Red ? "红方" : "蓝方",
                             enemyType == AntType.Worker ? "工蚁" : "兵蚁");
 
+                        float2 deadPos = enemyPositions[targetIndex].Value;
+                        float carrionYield = enemyType == AntType.Soldier
+                            ? GameConfig.CarrionPerSoldier
+                            : GameConfig.CarrionPerWorker;
+
+                        if (carrionYield > 0f)
+                        {
+                            Entity carrionEntity = ecb.CreateEntity();
+                            ecb.AddComponent(carrionEntity, new PositionComponent { Value = deadPos });
+                            ecb.AddComponent(carrionEntity, new FoodComponent
+                            {
+                                Amount = carrionYield,
+                                MaxAmount = carrionYield
+                            });
+                            ecb.AddComponent(carrionEntity, new CarrionComponent
+                            {
+                                DecayTimer = GameConfig.CarrionDecayTime,
+                                DecayTime = GameConfig.CarrionDecayTime
+                            });
+                            ecb.AddComponent<FoodTag>(carrionEntity);
+                            ecb.AddComponent<CarrionTag>(carrionEntity);
+
+                            string carrionSource = enemyType == AntType.Soldier ? "兵蚁尸体" : "工蚁尸体";
+                            BattleLogger.LogCarrionSpawned(deadPos, carrionYield, carrionSource);
+                        }
+
                         ecb.DestroyEntity(target);
 
                         antState.ValueRW.CurrentState = AntState.Idle;

@@ -10,7 +10,6 @@ namespace AntWar.Authoring
     {
         public int InitialWorkersPerTeam = 15;
         public int InitialSoldiersPerTeam = 5;
-        public int FoodPointCount = 12;
 
         public Vector2 RedNestPosition = new Vector2(-70, 0);
         public Vector2 BlueNestPosition = new Vector2(70, 0);
@@ -45,7 +44,7 @@ namespace AntWar.Authoring
 
             BattleLogger.Log($"🐜 初始蚂蚁已生成: 每队 {InitialWorkersPerTeam} 工蚁 + {InitialSoldiersPerTeam} 兵蚁");
 
-            SpawnFoodPoints(entityManager);
+            SpawnFruitTrees(entityManager);
         }
 
         private void CreateNest(EntityManager entityManager, TeamType team, float2 position)
@@ -162,45 +161,71 @@ namespace AntWar.Authoring
             }
         }
 
-        private void SpawnFoodPoints(EntityManager entityManager)
+        private void SpawnFruitTrees(EntityManager entityManager)
         {
             Random random = Random.CreateFromIndex(42);
             int spawned = 0;
-            int maxAttempts = FoodPointCount * 5;
+            int maxAttempts = GameConfig.FruitTreeCount * 5;
             int attempts = 0;
 
-            while (spawned < FoodPointCount && attempts < maxAttempts)
+            while (spawned < GameConfig.FruitTreeCount && attempts < maxAttempts)
             {
                 attempts++;
                 float x = random.NextFloat(-GameConfig.MapWidth / 2f + 10f, GameConfig.MapWidth / 2f - 10f);
                 float y = random.NextFloat(-GameConfig.MapHeight / 2f + 10f, GameConfig.MapHeight / 2f - 10f);
                 float2 pos = new float2(x, y);
 
-                if (math.distance(pos, GameConfig.RedNestPosition) < 20f ||
-                    math.distance(pos, GameConfig.BlueNestPosition) < 20f)
+                if (math.distance(pos, GameConfig.RedNestPosition) < GameConfig.FruitTreeMinDistanceFromNest ||
+                    math.distance(pos, GameConfig.BlueNestPosition) < GameConfig.FruitTreeMinDistanceFromNest)
                 {
                     continue;
                 }
 
-                float amount = random.NextFloat(GameConfig.MinFoodAmount, GameConfig.MaxFoodAmount);
-                CreateFoodPoint(entityManager, pos, amount);
+                var treeQuery = entityManager.CreateEntityQuery(
+                    ComponentType.ReadOnly<FruitTreeTag>(),
+                    ComponentType.ReadOnly<PositionComponent>());
+                using var treePositions = treeQuery.ToComponentDataArray<PositionComponent>(Unity.Collections.Allocator.Temp);
+                bool tooClose = false;
+                for (int t = 0; t < treePositions.Length; t++)
+                {
+                    if (math.distance(pos, treePositions[t].Value) < 15f)
+                    {
+                        tooClose = true;
+                        break;
+                    }
+                }
+                if (tooClose)
+                    continue;
+
+                float yield = random.NextFloat(GameConfig.MinFruitTreeYield, GameConfig.MaxFruitTreeYield);
+                CreateFruitTree(entityManager, pos, yield);
                 spawned++;
             }
 
-            BattleLogger.Log($"🍞 地图上生成了 {spawned} 个食物点");
+            BattleLogger.Log($"� 地图上生成了 {spawned} 棵果树");
         }
 
-        private void CreateFoodPoint(EntityManager entityManager, float2 position, float amount)
+        private void CreateFruitTree(EntityManager entityManager, float2 position, float yield)
         {
-            Entity foodEntity = entityManager.CreateEntity();
+            Entity treeEntity = entityManager.CreateEntity();
 
-            entityManager.AddComponentData(foodEntity, new PositionComponent { Value = position });
-            entityManager.AddComponentData(foodEntity, new FoodComponent
+            entityManager.AddComponentData(treeEntity, new PositionComponent { Value = position });
+            entityManager.AddComponentData(treeEntity, new FoodComponent
             {
-                Amount = amount,
-                MaxAmount = amount
+                Amount = yield,
+                MaxAmount = yield
             });
-            entityManager.AddComponent<FoodTag>(foodEntity);
+            entityManager.AddComponentData(treeEntity, new FruitTreeComponent
+            {
+                RegrowTimer = 0f,
+                RegrowInterval = GameConfig.FruitTreeRegrowInterval,
+                IsRegenerating = false,
+                MaxYield = yield
+            });
+            entityManager.AddComponent<FoodTag>(treeEntity);
+            entityManager.AddComponent<FruitTreeTag>(treeEntity);
+
+            BattleLogger.LogFruitTreeGrown(position, yield);
         }
 
         public void SetTeamStrategy(TeamType team, StrategyType strategy, Vector2 target, float radius)
